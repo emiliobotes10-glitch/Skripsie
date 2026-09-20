@@ -154,15 +154,16 @@ if uploaded_file is not None:
                 cell_data = row[column_name]
                 
                 if pd.isna(cell_data) or str(cell_data).strip() == "":
+                    # Blanks in SAWS usually mean no rain was recorded on a valid date
                     clean_rainfall.append(0.0)
                 else:
                     text_data = str(cell_data).strip()
                     
                     if text_data in missing_flags:
-                        # DELIBERATE CHOICE: Missing days are treated as zero rainfall. 
-                        # With overall missing data capped at 15%, this introduces a small, acceptable 
-                        # conservative bias (slightly underestimates total rainfall) rather than failing.
-                        clean_rainfall.append(0.0)
+                        # CRITICAL FIX: Missing days are kept as NaN. 
+                        # We do not know the actual rainfall. Forcing 0.0 here creates massive dry bias
+                        # if an entire month is missing.
+                        clean_rainfall.append(np.nan)
                         
                     elif 'C' in text_data:
                         try:
@@ -188,9 +189,11 @@ if uploaded_file is not None:
     })
     
 
-    # Simplified Monthly Aggregation (No 70% Rule)
+    # Safe Monthly Aggregation (The min_count=1 mechanism)
+    # If a month has at least 1 valid day, it sums the numbers (NaN days contribute 0).
+    # If a month is 100% NaN (station down), it returns a true NaN, not 0.0.
     monthly_stats = daily_df.groupby(pd.Grouper(key='Date', freq='ME')).agg(
-        Total_Monthly_Rain=('Rainfall_mm', 'sum')
+        Total_Monthly_Rain=('Rainfall_mm', lambda x: x.sum(min_count=1))
     ).reset_index()
     
     monthly_stats = monthly_stats.rename(columns={'Date': 'Month_Date'})
