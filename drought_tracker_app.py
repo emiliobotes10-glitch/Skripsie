@@ -189,14 +189,30 @@ if uploaded_file is not None:
     })
     
 
-    # Safe Monthly Aggregation (The min_count=1 mechanism)
-    # If a month has at least 1 valid day, it sums the numbers (NaN days contribute 0).
-    # If a month is 100% NaN (station down), it returns a true NaN, not 0.0.
+    # Safe Monthly Aggregation 
+    # We also count valid days vs total days to detect incomplete months.
     monthly_stats = daily_df.groupby(pd.Grouper(key='Date', freq='ME')).agg(
-        Total_Monthly_Rain=('Rainfall_mm', lambda x: x.sum(min_count=1))
+        Total_Monthly_Rain=('Rainfall_mm', lambda x: x.sum(min_count=1)),
+        Valid_Days=('Rainfall_mm', 'count'),
+        Days_in_Month=('Rainfall_mm', 'size')
     ).reset_index()
     
     monthly_stats = monthly_stats.rename(columns={'Date': 'Month_Date'})
+    
+    # --- CHECK FOR INCOMPLETE FINAL MONTH ---
+    if not monthly_stats.empty:
+        last_idx = monthly_stats.index[-1]
+        last_row = monthly_stats.loc[last_idx]
+        
+        # If the number of valid daily readings is less than the calendar days in that month
+        if last_row['Valid_Days'] < last_row['Days_in_Month']:
+            last_month_str = last_row['Month_Date'].strftime('%B %Y')
+            st.warning(f"⚠️ **Data Adjusted:** The final month ({last_month_str}) is incomplete ({int(last_row['Valid_Days'])}/{int(last_row['Days_in_Month'])} days recorded). It has been excluded from the analysis to prevent false drought signals.")
+            monthly_stats = monthly_stats.drop(last_idx)
+
+    # Drop the helper columns to keep the final dataframe clean
+    monthly_stats = monthly_stats.drop(columns=['Valid_Days', 'Days_in_Month'])
+    
     monthly_stats = monthly_stats.set_index('Month_Date')
 
     # ==========================================
