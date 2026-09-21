@@ -3,7 +3,6 @@ import pandas as pd
 import numpy as np
 import datetime
 
-
 # ==========================================
 # PHASE 1: APP SETUP & USER INTERFACE
 # ==========================================
@@ -201,14 +200,20 @@ if uploaded_file is not None:
     
     # --- CHECK FOR INCOMPLETE FINAL MONTH ---
     if not monthly_stats.empty:
-        last_idx = monthly_stats.index[-1]
-        last_row = monthly_stats.loc[last_idx]
+        # CRITICAL FIX: Find the last row that ACTUALLY has a numerical rainfall value,
+        # ignoring any trailing 'NaN' months that might exist at the end of the file.
+        last_valid_idx = monthly_stats['Total_Monthly_Rain'].last_valid_index()
         
-        # If the number of valid daily readings is less than the calendar days in that month
-        if last_row['Valid_Days'] < last_row['Days_in_Month']:
-            last_month_str = last_row['Month_Date'].strftime('%B %Y')
-            st.warning(f"⚠️ **Data Adjusted:** The final month ({last_month_str}) is incomplete ({int(last_row['Valid_Days'])}/{int(last_row['Days_in_Month'])} days recorded). It has been excluded from the analysis to prevent false drought signals.")
-            monthly_stats = monthly_stats.drop(last_idx)
+        # If a valid row was actually found (the dataframe isn't entirely NaNs)
+        if last_valid_idx is not None:
+            last_row = monthly_stats.loc[last_valid_idx]
+            
+            # If the number of valid daily readings is less than the calendar days in that month
+            if last_row['Valid_Days'] < last_row['Days_in_Month']:
+                last_month_str = last_row['Month_Date'].strftime('%B %Y')
+                st.warning(f"⚠️ **Data Adjusted:** The final active month ({last_month_str}) is incomplete ({int(last_row['Valid_Days'])}/{int(last_row['Days_in_Month'])} days recorded). It has been excluded from the analysis to prevent false drought signals.")
+                # Drop that specific incomplete row
+                monthly_stats = monthly_stats.drop(last_valid_idx)
 
     # Drop the helper columns to keep the final dataframe clean
     monthly_stats = monthly_stats.drop(columns=['Valid_Days', 'Days_in_Month'])
@@ -239,3 +244,75 @@ if uploaded_file is not None:
     # Persistent Warning check
     if has_warning:
         st.warning("⚠️ **Reminder:** Due to the missing data percentage (10-15%) in your upload, this final cumulative sum may be slightly underestimated.")
+
+    # ==========================================
+    # PHASE 5: DROUGHT THRESHOLD EXTRACTION & PLOTTING
+    # ==========================================
+    st.markdown("---")
+    st.markdown("### Step 3: Check Against Thresholds")
+    st.markdown("Extract the expected 12-month precipitation threshold for your location based on Smith's (2023) interpolated raster data.")
+    
+    # External library import for Phase 5 (Requires `rasterio` installed in your environment)
+    import rasterio
+    
+    # 1. Let the user choose the SPI file
+    spi_choice = st.selectbox(
+        "Select SPI Scenario:", 
+        ["SPI = 0 (Normal)", "SPI = -1 (Moderate Drought)"]
+    )
+
+    # 2. Map the dropdown choice to relative local file paths
+    # Because this is going to GitHub, we assume the .tif files are in the exact same folder as this app.py script.
+    if spi_choice == "SPI = 0 (Normal)":
+        tif_file_path = "SPI12_0.tif" 
+    elif spi_choice == "SPI = -1 (Moderate Drought)":
+        tif_file_path = "SPI12_NEG1.tif"
+
+    # 3. Process the threshold and display results when the button is clicked
+    if st.button("Check Drought Status", type="primary"):
+        if user_lat == 0.0 and user_lon == 0.0:
+            st.error("❌ Please enter a valid Latitude and Longitude in Step 1.")
+        else:
+            try:
+                # rasterio.open reads the GeoTIFF file from the directory
+                with rasterio.open(tif_file_path) as dataset:
+                    # rasterio.sample expects a list of coordinates in (Longitude, Latitude) order
+                    for val in dataset.sample([(user_lon, user_lat)]):
+                        extracted_threshold = val[0]
+                
+                # Check to make sure the extracted value is valid (sometimes rasters have NoData values like -9999)
+                if extracted_threshold < 0:
+                     st.error(f"❌ Error: The coordinates provided returned an invalid value ({extracted_threshold}). Make sure your coordinates are within South Africa.")
+                else:
+                    st.info(f"📍 **Threshold for your location:** {extracted_threshold:.1f} mm")
+                    
+                    # --- Data visualization: Plotting historical trend against threshold ---
+                    st.markdown("#### 📈 Historical 12-Month Rainfall vs. Threshold")
+                    
+                    # Prepare data for plotting by dropping the first 11 'NaN' rows and adding the threshold line
+                    chart_data = monthly_stats[['Rolling_12_Month_Rainfall']].dropna().copy()
+                    chart_data['Drought Threshold'] = extracted_threshold
+                    
+                    # Render the chart natively in Streamlit
+                    st.line_chart(chart_data)
+                    
+                    # --- The Final Comparison ---
+                    # We extract the very last (most recent) rolling 12-month rainfall value from the user's uploaded data
+                    latest_data_row = monthly_stats.iloc[-1]
+                    latest_rainfall = latest_data_row['Rolling_12_Month_Rainfall']
+                    latest_month_name = latest_data_row.name.strftime('%B %Y')
+                    
+                    st.write(f"🌧️ **Your most recent 12-month rainfall ({latest_month_name}):** {latest_rainfall:.1f} mm")
+                    
+                    # Prevent comparison if the latest value is NaN (e.g. if the final 12 months include missing data)
+                    if pd.isna(latest_rainfall):
+                         st.error("❌ Cannot calculate status: Your most recent 12-month period contains missing data (NaN).")
+                    elif latest_rainfall < extracted_threshold:
+                        st.error(f"🚨 **ALERT:** You are currently BELOW the {spi_choice} threshold.")
+                    else:
+                        st.success(f"✅ **SAFE:** You are currently ABOVE the {spi_choice} threshold.")
+
+            except FileNotFoundError:
+                st.error(f"❌ Could not find the file '{tif_file_path}'. If you are running this on Streamlit Cloud, ensure the .tif file is uploaded to your GitHub repository alongside app.py.")
+            except Exception as e:
+                st.error(f"❌ An error occurred while reading the spatial data: {e}")
