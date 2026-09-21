@@ -255,64 +255,109 @@ if uploaded_file is not None:
     # External library import for Phase 5 (Requires `rasterio` installed in your environment)
     import rasterio
     
-    # 1. Let the user choose the SPI file
-    spi_choice = st.selectbox(
-        "Select SPI Scenario:", 
-        ["SPI = 0 (Normal)", "SPI = -1 (Moderate Drought)"]
-    )
-
-    # 2. Map the dropdown choice to relative local file paths
+    # 1. Map the relative local file paths for BOTH thresholds
     # Because this is going to GitHub, we assume the .tif files are in the exact same folder as this app.py script.
-    if spi_choice == "SPI = 0 (Normal)":
-        tif_file_path = "SPI12_0.tif" 
-    elif spi_choice == "SPI = -1 (Moderate Drought)":
-        tif_file_path = "SPI12_NEG1.tif"
+    tif_normal_path = "SPI12_0.tif" 
+    tif_drought_path = "SPI12_NEG1.tif"
 
-    # 3. Process the threshold and display results when the button is clicked
+    # 2. Process the threshold and display results when the button is clicked
     if st.button("Check Drought Status", type="primary"):
         if user_lat == 0.0 and user_lon == 0.0:
             st.error("❌ Please enter a valid Latitude and Longitude in Step 1.")
         else:
             try:
-                # rasterio.open reads the GeoTIFF file from the directory
-                with rasterio.open(tif_file_path) as dataset:
+                # rasterio.open reads the GeoTIFF files from the directory
+                with rasterio.open(tif_normal_path) as dataset_norm, rasterio.open(tif_drought_path) as dataset_drought:
                     # rasterio.sample expects a list of coordinates in (Longitude, Latitude) order
-                    for val in dataset.sample([(user_lon, user_lat)]):
-                        extracted_threshold = val[0]
+                    for val in dataset_norm.sample([(user_lon, user_lat)]):
+                        threshold_normal = val[0]
+                    for val in dataset_drought.sample([(user_lon, user_lat)]):
+                        threshold_drought = val[0]
                 
-                # Check to make sure the extracted value is valid (sometimes rasters have NoData values like -9999)
-                if extracted_threshold < 0:
-                     st.error(f"❌ Error: The coordinates provided returned an invalid value ({extracted_threshold}). Make sure your coordinates are within South Africa.")
+                # Check to make sure the extracted values are valid
+                if threshold_normal < 0 or threshold_drought < 0:
+                     st.error("❌ Error: The coordinates provided returned an invalid value. Make sure your coordinates are within South Africa.")
                 else:
-                    st.info(f"📍 **Threshold for your location:** {extracted_threshold:.1f} mm")
+                    st.info(f"📍 **Normal Threshold (SPI=0):** {threshold_normal:.1f} mm | **Drought Threshold (SPI=-1):** {threshold_drought:.1f} mm")
                     
-                    # --- Data visualization: Plotting historical trend against threshold ---
-                    st.markdown("#### 📈 Historical 12-Month Rainfall vs. Threshold")
+                    # --- Data visualization: Plotting historical trend against thresholds ---
+                    st.markdown("#### 📈 Historical 12-Month Rainfall vs. Thresholds")
                     
-                    # Prepare data for plotting by dropping the first 11 'NaN' rows and adding the threshold line
+                    # Prepare data for plotting by dropping the first 11 'NaN' rows and adding threshold lines
                     chart_data = monthly_stats[['Rolling_12_Month_Rainfall']].dropna().copy()
-                    chart_data['Drought Threshold'] = extracted_threshold
+                    chart_data['Normal Threshold (SPI=0)'] = threshold_normal
+                    chart_data['Drought Threshold (SPI=-1)'] = threshold_drought
                     
                     # Render the chart natively in Streamlit
                     st.line_chart(chart_data)
                     
-                    # --- The Final Comparison ---
-                    # We extract the very last (most recent) rolling 12-month rainfall value from the user's uploaded data
-                    latest_data_row = monthly_stats.iloc[-1]
-                    latest_rainfall = latest_data_row['Rolling_12_Month_Rainfall']
-                    latest_month_name = latest_data_row.name.strftime('%B %Y')
+                    # --- The Final Comparison & Grey Zone Logic ---
+                    # Use last_valid_index() to find the most recent month that actually has a calculated rolling sum
+                    valid_sum_idx = monthly_stats['Rolling_12_Month_Rainfall'].last_valid_index()
                     
-                    st.write(f"🌧️ **Your most recent 12-month rainfall ({latest_month_name}):** {latest_rainfall:.1f} mm")
-                    
-                    # Prevent comparison if the latest value is NaN (e.g. if the final 12 months include missing data)
-                    if pd.isna(latest_rainfall):
-                         st.error("❌ Cannot calculate status: Your most recent 12-month period contains missing data (NaN).")
-                    elif latest_rainfall < extracted_threshold:
-                        st.error(f"🚨 **ALERT:** You are currently BELOW the {spi_choice} threshold.")
+                    if valid_sum_idx is not None:
+                        latest_data_row = monthly_stats.loc[valid_sum_idx]
+                        latest_rainfall = latest_data_row['Rolling_12_Month_Rainfall']
+                        latest_month_name = latest_data_row.name.strftime('%B %Y')
+                        
+                        st.write(f"🌧️ **Your most recent 12-month rainfall ({latest_month_name}):** {latest_rainfall:.1f} mm")
+                        
+                        # Determine Status
+                        status = ""
+                        if latest_rainfall >= threshold_normal:
+                            st.success("✅ **SAFE:** Your rainfall is above normal.")
+                            status = "Safe"
+                        elif latest_rainfall < threshold_drought:
+                            st.error("🚨 **DROUGHT:** Your rainfall is below the moderate drought threshold.")
+                            status = "Drought"
+                        else:
+                            # We are in the grey zone. We must look backward to see how we got here.
+                            status = "Grey Zone"
+                            
+                            # Extract historical rolling sums up to the latest valid month, dropping NaNs, reversed to go backwards
+                            historical_data = monthly_stats.loc[:valid_sum_idx, 'Rolling_12_Month_Rainfall'].dropna().iloc[::-1]
+                            
+                            found_crossing = False
+                            # Skip the first value since it is the latest_rainfall we just checked
+                            for past_val in historical_data.iloc[1:]:
+                                if past_val >= threshold_normal:
+                                    st.warning("⚠️ **DRY SPELL:** You are below normal, but you have not entered a drought recently.")
+                                    found_crossing = True
+                                    status = "Dry Spell"
+                                    break
+                                elif past_val < threshold_drought:
+                                    st.warning("⚠️ **RECOVERING:** You are currently out of severe drought, but have not reached full recovery (Normal). You are still in a drought event.")
+                                    found_crossing = True
+                                    status = "Recovering"
+                                    break
+                            
+                            # Fallback if loop finishes without finding a crossing
+                            if not found_crossing:
+                                st.warning("⚠️ **UNCERTAIN HISTORY:** Your rainfall is below normal but your record is too short to determine whether this is a new dry spell or recovery from a prior drought.")
+                                status = "Uncertain"
+                        
+                        # --- Duration Calculation ---
+                        if status in ["Drought", "Recovering"]:
+                            duration_counter = 0
+                            # Pull all valid history again to count from the current month backwards
+                            historical_data_all = monthly_stats.loc[:valid_sum_idx, 'Rolling_12_Month_Rainfall'].dropna().iloc[::-1]
+                            
+                            for past_val in historical_data_all:
+                                if past_val < threshold_normal:
+                                    duration_counter += 1
+                                else:
+                                    break
+                            
+                            st.write(f"⏳ **Duration:** This current deficit event has lasted for **{duration_counter} months**.")
+                            
+                            with st.expander("How do we calculate this?"):
+                                st.write("A drought doesn't end just because one month is slightly better. We consider a drought event active until your 12-month rainfall fully returns to the Normal (SPI=0) baseline.")
+                                
                     else:
-                        st.success(f"✅ **SAFE:** You are currently ABOVE the {spi_choice} threshold.")
+                        st.error("❌ Cannot calculate status: There are no valid 12-month periods in your dataset.")
 
             except FileNotFoundError:
-                st.error(f"❌ Could not find the file '{tif_file_path}'. If you are running this on Streamlit Cloud, ensure the .tif file is uploaded to your GitHub repository alongside app.py.")
+                st.error(f"❌ Could not find a raster file. If you are running this on Streamlit Cloud, ensure both .tif files are uploaded to your GitHub repository alongside app.py.")
             except Exception as e:
                 st.error(f"❌ An error occurred while reading the spatial data: {e}")
+            
