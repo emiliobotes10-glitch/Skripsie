@@ -5,11 +5,26 @@ import datetime
 import xarray as xr
 import scipy.stats as stats
 import spei
+import requests
 
 # ==========================================
 # PHASE 0: APP CONFIG & SESSION STATE
 # ==========================================
 st.set_page_config(page_title="Combined Drought Tracker V0", layout="centered")
+
+@st.cache_data
+def geocode_place(place_name):
+    """Fetches up to 5 location matches from Open-Meteo's Geocoding API."""
+    url = f"https://geocoding-api.open-meteo.com/v1/search?name={place_name}&count=5"
+    try:
+        response = requests.get(url)
+        response.raise_for_status()
+        data = response.json()
+        if "results" in data:
+            return data["results"]
+        return []
+    except Exception:
+        return []
 
 # Initialize session state to track which path the user has chosen.
 if "path" not in st.session_state:
@@ -55,11 +70,42 @@ elif st.session_state["path"] == "upload":
 
     # --- 2A.1: User Inputs ---
     st.markdown("#### Step 1: Enter your location")
-    col1, col2 = st.columns(2)
-    with col1:
-        user_lat = st.number_input("Enter Latitude (e.g., -33.8000)", value=0.0, format="%.4f")
-    with col2:
-        user_lon = st.number_input("Enter Longitude (e.g., 19.8000)", value=0.0, format="%.4f")
+    
+    location_choice = st.radio("How would you like to set your location?", ["Search by City/Town", "Enter Coordinates"], key="loc_2a")
+    
+    user_lat, user_lon = 0.0, 0.0
+    
+    if location_choice == "Search by City/Town":
+        place_name = st.text_input("Enter city or town name:")
+        if place_name:
+            results = geocode_place(place_name)
+            if results:
+                # Format results for the selectbox
+                options = {}
+                for r in results:
+                    admin = r.get('admin1', '')
+                    country = r.get('country', '')
+                    name = r.get('name', '')
+                    
+                    label = f"{name}"
+                    if admin: label += f", {admin}"
+                    if country: label += f", {country}"
+                    label = f"{label} (Lat: {r['latitude']:.2f}, Lon: {r['longitude']:.2f})"
+                    
+                    # Store lat/lon tuple keyed by the display label
+                    options[label] = (r['latitude'], r['longitude'])
+                
+                selected_label = st.selectbox("Select the correct match:", list(options.keys()), key="sel_2a")
+                user_lat, user_lon = options[selected_label]
+                st.success(f"📍 Location set: Lat {user_lat:.4f}, Lon {user_lon:.4f}")
+            else:
+                st.error("❌ Could not find this place.")
+    else:
+        col1, col2 = st.columns(2)
+        with col1:
+            user_lat = st.number_input("Enter Latitude (e.g., -33.8000)", value=0.0, format="%.4f")
+        with col2:
+            user_lon = st.number_input("Enter Longitude (e.g., 19.8000)", value=0.0, format="%.4f")
 
     st.markdown("#### Step 2: Upload SAWS Data")
     st.markdown("Please upload your historical South African Weather Service (SAWS) rainfall data below. A minimum of 12 months of data is required.")
@@ -255,6 +301,8 @@ elif st.session_state["path"] == "upload":
         if st.button("Check Drought Status", type="primary"):
             if user_lat == 0.0 and user_lon == 0.0:
                 st.error("❌ Please enter a valid Latitude and Longitude in Step 1.")
+            elif not (-35.0 <= user_lat <= -22.0 and 16.0 <= user_lon <= 33.0):
+                st.error("❌ Coordinates are outside South Africa bounds (-35 to -22 lat, 16 to 33 lon).")
             else:
                 try:
                     with rasterio.open(tif_normal_path) as dataset_norm, rasterio.open(tif_drought_path) as dataset_drought:
@@ -351,11 +399,43 @@ elif st.session_state["path"] == "chirps":
 
     # --- 2B.1: User Inputs ---
     st.markdown("#### Enter your location")
-    col1, col2 = st.columns(2)
-    with col1:
-        user_lat = st.number_input("Latitude (e.g., -33.7609)", value=-33.7609, format="%.4f")
-    with col2:
-        user_lon = st.number_input("Longitude (e.g., 19.4741)", value=19.4741, format="%.4f")
+    
+    location_choice_b = st.radio("How would you like to set your location?", ["Search by City/Town", "Enter Coordinates"], key="loc_2b")
+    
+    # Defaults for CHIRPS path
+    user_lat, user_lon = -33.7609, 19.4741
+    
+    if location_choice_b == "Search by City/Town":
+        place_name = st.text_input("Enter city or town name:")
+        if place_name:
+            results = geocode_place(place_name)
+            if results:
+                # Format results for the selectbox
+                options = {}
+                for r in results:
+                    admin = r.get('admin1', '')
+                    country = r.get('country', '')
+                    name = r.get('name', '')
+                    
+                    label = f"{name}"
+                    if admin: label += f", {admin}"
+                    if country: label += f", {country}"
+                    label = f"{label} (Lat: {r['latitude']:.2f}, Lon: {r['longitude']:.2f})"
+                    
+                    # Store lat/lon tuple keyed by the display label
+                    options[label] = (r['latitude'], r['longitude'])
+                
+                selected_label = st.selectbox("Select the correct match:", list(options.keys()), key="sel_2b")
+                user_lat, user_lon = options[selected_label]
+                st.success(f"📍 Location set: Lat {user_lat:.4f}, Lon {user_lon:.4f}")
+            else:
+                st.error("❌ Could not find this place.")
+    else:
+        col1, col2 = st.columns(2)
+        with col1:
+            user_lat = st.number_input("Latitude (e.g., -33.7609)", value=-33.7609, format="%.4f")
+        with col2:
+            user_lon = st.number_input("Longitude (e.g., 19.4741)", value=19.4741, format="%.4f")
 
     if st.button("Run SPI Calculation", type="primary"):
 
