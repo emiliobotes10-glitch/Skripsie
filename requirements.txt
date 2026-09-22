@@ -4,3 +4,7 @@ requests
 numpy
 openpyxl
 rasterio
+xarray
+scipy
+spei
+netcdf4
