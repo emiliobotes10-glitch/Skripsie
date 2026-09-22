@@ -73,12 +73,30 @@ if st.button("Run SPI Calculation", type="primary"):
     ).sum()
 
     # ==========================================
-    # PHASE 4: SPI CALCULATION
+    # PHASE 4: SPI CALCULATION & THRESHOLD EXTRACTION
     # ==========================================
     st.info("Fitting Gamma distribution and calculating SPI-12...")
 
     spi_values = spei.spi(monthly_df["Rolling_12_Month_Rainfall"], dist=stats.gamma)
     monthly_df["SPI_12"] = spi_values
+
+    # --- Extract Precipitation Thresholds from the Fitted Gamma ---
+    # Fit the gamma distribution to the rolling sums ourselves to get the parameters
+    rolling_clean = monthly_df["Rolling_12_Month_Rainfall"].dropna()
+    # Remove any zeros since gamma is defined for positive values only
+    rolling_positive = rolling_clean[rolling_clean > 0]
+
+    # Fit gamma with floc=0 (fixed location at zero, standard for SPI)
+    shape, loc, scale = stats.gamma.fit(rolling_positive, floc=0)
+
+    # Convert SPI = 0 and SPI = -1 back to precipitation in mm
+    # SPI = 0 corresponds to cumulative probability 0.500
+    # SPI = -1 corresponds to cumulative probability 0.158
+    threshold_normal = stats.gamma.ppf(0.500, shape, loc, scale)
+    threshold_drought = stats.gamma.ppf(0.158, shape, loc, scale)
+
+    st.info(f"📍 **Precipitation Thresholds (from CHIRPS Gamma fit):**")
+    st.write(f"Normal (SPI=0): **{threshold_normal:.1f} mm** | Drought (SPI=-1): **{threshold_drought:.1f} mm**")
 
     # ==========================================
     # DISPLAY RESULTS
@@ -117,12 +135,19 @@ if st.button("Run SPI Calculation", type="primary"):
     st.markdown(f"**12-month cumulative rainfall:** {latest_rainfall:.1f} mm")
     st.markdown(f"**SPI-12 value:** {latest_spi:.2f}")
 
+    # --- Chart: Rolling Rainfall vs Precipitation Thresholds (in mm) ---
+    st.markdown("#### 📈 Historical 12-Month Rainfall vs. Thresholds")
+    chart_data = monthly_df[["Rolling_12_Month_Rainfall"]].dropna().copy()
+    chart_data["Normal (SPI=0)"] = threshold_normal
+    chart_data["Drought (SPI=-1)"] = threshold_drought
+    st.line_chart(chart_data)
+
     # --- Chart: Historical SPI with threshold lines ---
     st.markdown("#### 📈 Historical SPI-12")
-    chart_data = monthly_df[["SPI_12"]].dropna().copy()
-    chart_data["SPI = 0 (Normal)"] = 0.0
-    chart_data["SPI = -1 (Drought)"] = -1.0
-    st.line_chart(chart_data)
+    spi_chart = monthly_df[["SPI_12"]].dropna().copy()
+    spi_chart["SPI = 0 (Normal)"] = 0.0
+    spi_chart["SPI = -1 (Drought)"] = -1.0
+    st.line_chart(spi_chart)
 
     # --- Determine Status ---
     status = ""
