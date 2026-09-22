@@ -50,6 +50,9 @@ if st.button("Run SPI Calculation", type="primary"):
     monthly_df = point_data.to_dataframe().reset_index()
     monthly_df = monthly_df.rename(columns={"time": "Month_Date", "rainfall": "Monthly_Rain"})
     monthly_df = monthly_df[["Month_Date", "Monthly_Rain"]].copy()
+    
+    # Ensure the index is a datetime object so we can group by month later
+    monthly_df["Month_Date"] = pd.to_datetime(monthly_df["Month_Date"])
     monthly_df = monthly_df.set_index("Month_Date")
     monthly_df = monthly_df.sort_index()
 
@@ -75,27 +78,63 @@ if st.button("Run SPI Calculation", type="primary"):
     # ==========================================
     # PHASE 4: SPI CALCULATION & THRESHOLD EXTRACTION
     # ==========================================
-    st.info("Fitting Gamma distribution and calculating SPI-12...")
+    st.info("Fitting distributions per calendar month and calculating SPI-12...")
 
+    # The SPEI library automatically handles the per-month fitting for the forward SPI calculation
     spi_values = spei.spi(monthly_df["Rolling_12_Month_Rainfall"], dist=stats.gamma)
     monthly_df["SPI_12"] = spi_values
 
-    # --- Extract Precipitation Thresholds from the Fitted Gamma ---
-    # Fit the gamma distribution to the rolling sums ourselves to get the parameters
-    rolling_clean = monthly_df["Rolling_12_Month_Rainfall"].dropna()
-    # Remove any zeros since gamma is defined for positive values only
-    rolling_positive = rolling_clean[rolling_clean > 0]
+    # --- Extract Precipitation Thresholds from the Fitted Gamma (Smith Methodology) ---
+    spi_0_thresholds = []
+    spi_minus_1_thresholds = []
 
-    # Fit gamma with floc=0 (fixed location at zero, standard for SPI)
-    shape, loc, scale = stats.gamma.fit(rolling_positive, floc=0)
+    # Iterate through all 12 calendar months (1 = Jan, 12 = Dec)
+    for month in range(1, 13):
+        # Isolate the rolling sums that end in this specific calendar month
+        month_data = monthly_df[monthly_df.index.month == month]["Rolling_12_Month_Rainfall"].dropna()
+        
+        if month_data.empty:
+            continue
+            
+        n_total = len(month_data)
+        
+        # Gamma distribution is only defined for x > 0
+        month_positive = month_data[month_data > 0]
+        n_zeros = n_total - len(month_positive)
+        
+        # q is the empirical probability of zero rainfall for this calendar month
+        q = n_zeros / n_total
+        
+        if not month_positive.empty:
+            # Fit gamma for the non-zero values of this specific month
+            shape, loc, scale = stats.gamma.fit(month_positive, floc=0)
+            
+            # Helper function to invert the McKee H(x) mixed distribution
+            def get_rainfall_for_prob(target_p):
+                # If target probability is less than or equal to the probability of zero rain, threshold is 0
+                if target_p <= q:
+                    return 0.0
+                else:
+                    # Adjust probability to account for zeros before querying the Gamma inverse CDF
+                    adjusted_p = (target_p - q) / (1.0 - q)
+                    return stats.gamma.ppf(adjusted_p, shape, loc, scale)
+            
+            # Find the mm rainfall corresponding to SPI=0 (P=0.500) and SPI=-1 (P=0.1587)
+            thresh_0 = get_rainfall_for_prob(0.500)
+            thresh_minus_1 = get_rainfall_for_prob(0.1587)
+            
+            spi_0_thresholds.append(thresh_0)
+            spi_minus_1_thresholds.append(thresh_minus_1)
 
-    # Convert SPI = 0 and SPI = -1 back to precipitation in mm
-    # SPI = 0 corresponds to cumulative probability 0.500
-    # SPI = -1 corresponds to cumulative probability 0.158
-    threshold_normal = stats.gamma.ppf(0.500, shape, loc, scale)
-    threshold_drought = stats.gamma.ppf(0.158, shape, loc, scale)
+    # Average the 12 monthly thresholds to get a single station threshold (Smith method)
+    if spi_0_thresholds and spi_minus_1_thresholds:
+        threshold_normal = np.mean(spi_0_thresholds)
+        threshold_drought = np.mean(spi_minus_1_thresholds)
+    else:
+        threshold_normal = 0
+        threshold_drought = 0
 
-    st.info(f"📍 **Precipitation Thresholds (from CHIRPS Gamma fit):**")
+    st.info(f"📍 **Station Precipitation Thresholds (Smith Method - Averaged over 12 months):**")
     st.write(f"Normal (SPI=0): **{threshold_normal:.1f} mm** | Drought (SPI=-1): **{threshold_drought:.1f} mm**")
 
     # ==========================================
@@ -136,10 +175,10 @@ if st.button("Run SPI Calculation", type="primary"):
     st.markdown(f"**SPI-12 value:** {latest_spi:.2f}")
 
     # --- Chart: Rolling Rainfall vs Precipitation Thresholds (in mm) ---
-    st.markdown("#### 📈 Historical 12-Month Rainfall vs. Thresholds")
+    st.markdown("#### 📈 Historical 12-Month Rainfall vs. Averaged Thresholds")
     chart_data = monthly_df[["Rolling_12_Month_Rainfall"]].dropna().copy()
-    chart_data["Normal (SPI=0)"] = threshold_normal
-    chart_data["Drought (SPI=-1)"] = threshold_drought
+    chart_data["Normal (SPI=0 Average)"] = threshold_normal
+    chart_data["Drought (SPI=-1 Average)"] = threshold_drought
     st.line_chart(chart_data)
 
     # --- Chart: Historical SPI with threshold lines ---
