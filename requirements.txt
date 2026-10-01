@@ -8,3 +8,6 @@ xarray
 scipy
 spei
 netcdf4
+datetime
+requests
+re
