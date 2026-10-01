@@ -24,6 +24,13 @@ def geocode_place(place_name):
     except Exception:
         return []
 
+def show_location_map(lat, lon):
+    """Draw a pin at the chosen location so the user can sanity-check it."""
+    if lat == 0.0 and lon == 0.0:
+        return
+    st.map(pd.DataFrame({"lat": [lat], "lon": [lon]}), zoom=8, size=2000)
+    st.caption(f"Check the pin: Lat {lat:.4f}, Lon {lon:.4f}")
+
 if "path" not in st.session_state:
     st.session_state["path"] = None
 
@@ -93,6 +100,10 @@ elif st.session_state["path"] == "upload":
         with col2:
             user_lon = st.number_input("Enter Longitude (e.g., 19.8000)", value=0.0, format="%.4f")
 
+    # --- Map check for the location entered in Step 1 ---
+    show_location_map(user_lat, user_lon)
+    step1_lat, step1_lon = user_lat, user_lon
+
     st.markdown("#### Step 2: Upload SAWS Data")
     st.markdown("Please upload your historical South African Weather Service (SAWS) rainfall data below. A minimum of 12 months of data is required.")
     uploaded_file = st.file_uploader("Upload your SAWS Excel file (.xlsx, .xls)", type=['xlsx', 'xls'])
@@ -125,6 +136,11 @@ elif st.session_state["path"] == "upload":
                     user_lat, user_lon = file_lat, file_lon
             else:
                 st.success("Your location matches the station in the file.")
+
+        # --- Map check again if the file changed the location that will be used ---
+        if (user_lat, user_lon) != (step1_lat, step1_lon):
+            st.markdown("**Location that will be used for the thresholds:**")
+            show_location_map(user_lat, user_lon)
 
         # --- Cut-off date: SAWS extraction date from the year-block headers ---
         # Days after this date had not happened yet when the file was extracted,
@@ -721,6 +737,9 @@ elif st.session_state["path"] == "chirps":
             user_lat = st.number_input("Latitude (e.g., -33.7609)", value=-33.7609, format="%.4f")
         with col2:
             user_lon = st.number_input("Longitude (e.g., 19.4741)", value=19.4741, format="%.4f")
+
+    # --- Map check for the chosen location ---
+    show_location_map(user_lat, user_lon)
 
     if st.button("Run SPI Calculation", type="primary"):
 
