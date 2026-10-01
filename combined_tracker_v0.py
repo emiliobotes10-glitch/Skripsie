@@ -103,7 +103,7 @@ elif st.session_state["path"] == "upload":
         # --- Location check (only runs if the file contains SAWS-style metadata) ---
         file_lat, file_lon = None, None
         if 'Unnamed: 0' in rain_data.columns:
-            for value in rain_data['Unnamed: 0'].astype(str):
+            for value in rain_data['Unnamed: 0'].dropna().map(str):
                 if "Daily Rain (mm) Data for station" in value:
                     matches = re.findall(r'-?\d+\.\d+', value)
                     if len(matches) >= 2:
@@ -131,7 +131,7 @@ elif st.session_state["path"] == "upload":
         # so they are excluded from both the missing-data % and the analysis.
         cutoff_date = None
         if 'Unnamed: 0' in rain_data.columns:
-            for value in rain_data['Unnamed: 0'].astype(str):
+            for value in rain_data['Unnamed: 0'].dropna().map(str):
                 if "Daily Rain" in value:
                     match = re.search(r'Extracted\s+(\d{4})/(\d{1,2})/(\d{1,2})', value)
                     if match:
