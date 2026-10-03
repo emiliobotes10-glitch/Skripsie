@@ -7,6 +7,7 @@ import scipy.stats as stats
 import requests
 import re
 import rasterio
+import os
 
 # ---------- App setup ----------
 st.set_page_config(page_title="Combined Drought Tracker V0", layout="centered")
@@ -962,6 +963,18 @@ elif st.session_state["path"] == "chirps":
             longitude=user_lon,
             method="nearest"
         )
+
+        # Months added since the history file was built (written by update_chirps.py).
+        # Only this location's values are read from each file, then joined by date.
+        if os.path.exists("chirps_sa_recent.nc"):
+            recent = xr.open_dataset("chirps_sa_recent.nc")
+            recent_point = recent["rainfall"].sel(
+                latitude=user_lat,
+                longitude=user_lon,
+                method="nearest"
+            )
+            point_data = xr.concat([point_data, recent_point], dim="time")
+            recent.close()
 
         monthly_df = point_data.to_dataframe().reset_index()
         monthly_df = monthly_df.rename(columns={"time": "Month_Date", "rainfall": "Monthly_Rain"})
