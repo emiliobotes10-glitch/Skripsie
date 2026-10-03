@@ -1,0 +1,37 @@
+name: Update CHIRPS data
+
+on:
+  schedule:
+    - cron: "17 4 * * *"   # every day at 06:17 South African time; does nothing if no new month
+  workflow_dispatch:        # lets you run it by hand from the Actions tab
+
+permissions:
+  contents: write
+
+jobs:
+  update:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install libraries
+        run: pip install numpy pandas xarray netCDF4 rasterio requests
+
+      - name: Add new months
+        run: python update_chirps.py
+
+      - name: Commit the updated file
+        run: |
+          if [ -z "$(git status --porcelain chirps_sa_recent.nc)" ]; then
+            echo "No new data."
+          else
+            git config user.name "github-actions[bot]"
+            git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+            git add chirps_sa_recent.nc
+            git commit -m "Add latest CHIRPS month"
+            git push
+          fi
