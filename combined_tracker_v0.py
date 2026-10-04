@@ -195,6 +195,14 @@ if st.session_state["path"] is None:
             st.rerun()
         st.info("No file needed — just enter your coordinates. Up-to-date data to 2026. Note: CHIRPS satellite data often tends to overestimate low amounts of rainfall and underestimate high amounts of rainfall.")
 
+    st.markdown("---")
+    st.markdown("**On an Android phone?** The drought tracker is also available as an app.")
+    st.link_button(
+        "Download the Android app (.apk)",
+        "https://github.com/emiliobotes10-glitch/Skripsie/releases/latest/download/drought-tracker.apk",
+    )
+    st.caption("After downloading, open the file and allow your browser to install apps when Android asks.")
+
 # ---------- Rainfall upload path (SAWS, daily template, monthly template) ----------
 elif st.session_state["path"] == "upload":
     
