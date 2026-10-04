@@ -1,10 +1,15 @@
-streamlit
-pandas
-requests
+# Used by both the Streamlit app and the API.
+# Once everything works, replace these with exact versions from `pip freeze`.
+pandas>=2.2
 numpy
-openpyxl
-rasterio
-xarray
 scipy
-netcdf4
+xarray
+netCDF4
+rasterio
+openpyxl
 xlrd
+requests
+streamlit
+fastapi
+uvicorn
+python-multipart
