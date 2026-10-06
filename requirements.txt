@@ -1,5 +1,4 @@
 # Used by both the Streamlit app and the API.
-# Once everything works, replace these with exact versions from `pip freeze`.
 pandas>=2.2
 numpy
 scipy
